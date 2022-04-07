@@ -38,6 +38,8 @@ from sensor_msgs.msg import CompressedImage
 
 import cv2
 
+from dt_apriltags import Detector
+
 
 class MoveHandler():
     # Class structure adapted from OdometryReader:
@@ -72,6 +74,11 @@ class MoveHandler():
 
     # move forward accounting for the direction of the path
     def follow_path(self):
+        # early out and stop if camera detects stop april tag
+        if (self.camera.stop):
+            self.stop()
+            return
+
         # initialize movement command
         move_cmd = Twist2DStamped()
         move_cmd.v = self.linear_speed
@@ -92,6 +99,17 @@ class CameraReader():
         self.intersection = False
 
         self.stop = False
+
+        self.at_detector = Detector(searchpath=['apriltags'],
+                       families='tag36h11',
+                       nthreads=1,
+                       quad_decimate=1.0,
+                       quad_sigma=0.0,
+                       refine_edges=1,
+                       decode_sharpening=0.25,
+                       debug=0)
+
+        self.detect_counter = 0
         
         self.topic = '/csc22911/camera_node/image/compressed'
         self.register()
@@ -113,6 +131,12 @@ class CameraReader():
         cv_image = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         # convert to hsv
         hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
+
+        # counter for detection
+        if (self.detect_counter == 0):
+            self.detect_april_tags(cv_image)
+            self.detect_counter = 10
+        self.detect_counter -= 1
 
         # rgb to hsv values found using experimentation and this source:
         # https://www.rapidtables.com/convert/color/rgb-to-hsv.html
@@ -159,7 +183,7 @@ class CameraReader():
 
             #rospy.loginfo("intersection mode")
                     
-        rospy.loginfo("yellow amount: %i", int(np.sum(path_mask)))
+        # rospy.loginfo("yellow amount: %i", int(np.sum(path_mask)))
         
         # by default track the yellow path
         if (self.check_mask(path_mask)):
@@ -238,6 +262,17 @@ class CameraReader():
         else:
             return False
 
+    def detect_april_tags(self, img):
+        grey_img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        tags = self.at_detector.detect(grey_img, estimate_tag_pose=False, camera_params=None, tag_size=None)
+
+        if len(tags) and tags[0].tag_id == 166:
+            self.stop = True
+            #rospy.loginfo("detected")
+        else:
+            #rospy.loginfo("not detected")
+            pass
+
 
 class MainNode(DTROS):
 
@@ -250,13 +285,15 @@ class MainNode(DTROS):
 
     def run(self):
         rate = rospy.Rate(10)
-        while not rospy.is_shutdown():
+        while not self.move_handler.stopped and not rospy.is_shutdown():
             self.move_handler.follow_path()
             rate.sleep()
 
     def on_shutdown(self):
         self.move_handler.stop()
         self.move_handler.unregister()
+        rospy.loginfo("Shutting down")
+        rospy.sleep(1.0)
         super(MainNode, self).on_shutdown()
         
 
@@ -266,4 +303,4 @@ if __name__ == '__main__':
     # run node
     node.run()
     # keep spinning
-    rospy.spin()
+    #rospy.spin()
