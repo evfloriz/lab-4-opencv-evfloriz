@@ -116,55 +116,39 @@ class CameraReader():
             self.detect_counter = 5
         self.detect_counter -= 1
 
-        # rgb to hsv values found using experimentation:
+        # rgb to hsv values found using experimentation
         path_low = np.array([20, 63, 63])
         path_high = np.array([40, 255, 255])
+
+        # create a mask of the yellow path
         path_mask = cv2.inRange(hsv, path_low, path_high)
 
         h, w, d = cv_image.shape
 
-        # get a crop of the bottom of the robots vision
+        # duplicate mask and crop to analyze the bottom of the robots vision
         path_mask_bottom = path_mask.copy()
         path_mask_bottom[0:(3 * h // 4), 0:w] = 0
-
         
-        # get a narrow crop of the path mask to snap to path after intersection
-        search_left = 1 * w // 4
-        search_right = 3 * w // 4
-        
+        # duplicate mask and crop to analyze a narrow vertical slice of the robots vision,
+        # in order to find the path after the intersection
         path_mask_crossing = path_mask.copy()
-        path_mask_crossing[0:h, 0:search_left] = 0
-        path_mask_crossing[0:h, search_right:w] = 0
+        path_mask_crossing[0:h, 0:(1 * w // 4)] = 0
+        path_mask_crossing[0:h, (3 * w // 4):w] = 0
         
-        # crop the masks to just a narrow row in front of the turtlebot
-        search_top = 2 * h // 4
-        search_bottom = 3 * h // 4
-        
-        path_mask[0:search_top, 0:w] = 0
-        path_mask[search_bottom:h, 0:w] = 0
+        # crop original mask to just a narrow row in front of the robot for line follow
+        path_mask[0:(2 * h // 4), 0:w] = 0
+        path_mask[(3 * h // 4):h, 0:w] = 0
 
-        # no yellow in the bottom quarter - crop to higher centroied
-        
+        # if there is not enough yellow in the bottom mask, intersection detected
+        # follow the centroid from the mask that captures the path after the intersection
         if (np.sum(path_mask_bottom) < 10000):
-            # intersection mode
-            
-            # crop the edges of path_mask
             path_mask = path_mask_crossing
 
-            #rospy.loginfo("intersection mode")
-                    
-        # rospy.loginfo("yellow amount: %i", int(np.sum(path_mask)))
-        
-        # by default track the yellow path
+        # update dist_to_center if yellow path is detected in the mask
         if (self.check_mask(path_mask)):
             self.dist_to_center = self.find_dist_to_center(path_mask, w)
 
-        # intersection ahead
-        # if masked band is under a threshold of yellow, move forward only
-        # crop sides until threshold is great enough
-        # eg 
-
-        # publish image for debugging
+        # publish mask for debugging
         msg = CompressedImage()
         msg.header.stamp = rospy.Time.now()
         msg.format = "jpeg"
