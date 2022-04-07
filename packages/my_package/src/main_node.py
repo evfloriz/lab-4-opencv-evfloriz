@@ -25,6 +25,7 @@
 #   https://github.com/duckietown/lib-dt-apriltags
 
 import os
+import queue
 import rospy
 from duckietown.dtros import DTROS, NodeType
 from std_msgs.msg import String
@@ -96,7 +97,7 @@ class CameraReader():
         self.register()
 
     def add_debug_publishers(self):
-        self.debug_raw = rospy.Publisher('/csc22911/camera_node/output/raw/compressed', CompressedImage)
+        self.debug_raw_image = rospy.Publisher('/csc22911/camera_node/output/raw/compressed', CompressedImage)
 
     def register(self):
         self.subscriber = rospy.Subscriber(self.topic, CompressedImage, self.callback, queue_size=1)
@@ -122,14 +123,43 @@ class CameraReader():
         # source path processing code and information:
         # Programming Robots with ROS: A Practical Introduction to the Robot Operating System
         # link to section on Google Books is at the top of this file
+
+        h, w, d = cv_image.shape
+
+        # get a crop of the bottom of the robots vision
+        path_mask_bottom = path_mask.copy()
+        path_mask_bottom[0:(3 * h // 4), 0:w] = 0
+
+        
+        # get a narrow crop of the path mask to snap to path after intersection
+        search_left = 1 * w // 4
+        search_right = 3 * w // 4
+        
+        path_mask_crossing = path_mask.copy()
+        path_mask_crossing[0:h, 0:search_left] = 0
+        path_mask_crossing[0:h, search_right:w] = 0
         
         # crop the masks to just a narrow row in front of the turtlebot
-        h, w, d = cv_image.shape
-        search_top = 1 * h // 2
-        search_bottom = search_top + (1 * h // 4)
+        search_top = 2 * h // 4
+        search_bottom = 3 * h // 4
         
         path_mask[0:search_top, 0:w] = 0
         path_mask[search_bottom:h, 0:w] = 0
+
+        # go straight by default
+        #self.dist_to_center = 0
+
+        # no yellow in the bottom quarter - crop to higher centroied
+        
+        if (np.sum(path_mask_bottom) < 10000):
+            # intersection mode
+            
+            # crop the edges of path_mask
+            path_mask = path_mask_crossing
+
+            #rospy.loginfo("intersection mode")
+                    
+        rospy.loginfo("yellow amount: %i", int(np.sum(path_mask)))
         
         # by default track the yellow path
         if (self.check_mask(path_mask)):
@@ -155,6 +185,8 @@ class CameraReader():
         # | yyyy |
         # --------
 
+        
+
         # image matching
 
         # publish raw image for debugging
@@ -163,7 +195,7 @@ class CameraReader():
         msg.format = "jpeg"
         msg.data = np.array(cv2.imencode('.jpg', path_mask)[1]).tostring()
 
-        self.debug_raw.publish(msg)
+        self.debug_raw_image.publish(msg)
         
 
     def find_dist_to_center(self, mask, w):
